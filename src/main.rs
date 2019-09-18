@@ -107,14 +107,6 @@ struct Client {
     username: String,
 }
 
-fn create_user_ids(max_id: usize) -> Vec<usize> {
-    let mut v = Vec::with_capacity(max_id);
-    for i in (0..max_id).rev() {
-        v.push(i);
-    }
-    return v;
-}
-
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:3333").unwrap();
     let clients = Arc::new(Mutex::new(vec![Client {
@@ -122,7 +114,7 @@ fn main() {
         username: "root".to_string(),
     }]));
     let max_id = 100;
-    let user_id = Arc::new(Mutex::new(create_user_ids(max_id)));
+    let user_id = Arc::new(Mutex::new((0..max_id).rev().collect()));
     // accept connections and process them, spawning a new thread for each one
     println!("Server listening on port 3333");
     for stream in listener.incoming() {
