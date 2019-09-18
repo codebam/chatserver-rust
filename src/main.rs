@@ -32,8 +32,9 @@ fn handle_client(
                         let c = Client {
                             ip: client.socket_addr,
                             username: words.next().unwrap().to_string(),
+                            version: words.next().unwrap().to_string(),
                         };
-                        if VERSION == words.next().unwrap().to_string() {
+                        if VERSION == c.version {
                             println!("client authenticated: {:#?}", c);
                             clients.lock().unwrap().push(c);
 
@@ -94,6 +95,7 @@ fn handle_client(
 struct Client {
     ip: SocketAddr,
     username: String,
+    version: String,
 }
 
 struct ClientHandler {
@@ -141,6 +143,7 @@ fn main() {
     let clients = Arc::new(Mutex::new(vec![Client {
         ip: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
         username: "root".to_string(),
+        version: VERSION.to_string(),
     }]));
     let max_id = 100;
     let user_id = Arc::new(Mutex::new((1..max_id).rev().collect()));
