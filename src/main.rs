@@ -32,45 +32,47 @@ fn handle_client(
         Ok(_) => {
             let mut words = str::from_utf8(&data).unwrap().split_whitespace();
             let command = words.next();
-            match command {
-                Some("LOGN") => {
-                    let c = Client {
-                        ip: stream.peer_addr().unwrap(),
-                        username: words.next().unwrap().to_string(),
-                    };
-                    if VERSION == words.next().unwrap().to_string() {
-                        println!("client authenticated: {:#?}", c);
-                        clients.lock().unwrap().push(c);
-
-                        let user_id: usize = match id.lock() {
-                            Ok(mut id) => {
-                                let t = id.len();
-                                let y = id[t - 1];
-                                id.truncate(t - 1);
-                                y
-                            }
-                            Err(_) => 999,
-                            // default user id is 999
+            if !client_connected(stream.peer_addr().unwrap(), &clients) {
+                match command {
+                    Some("LOGN") => {
+                        let c = Client {
+                            ip: stream.peer_addr().unwrap(),
+                            username: words.next().unwrap().to_string(),
                         };
+                        if VERSION == words.next().unwrap().to_string() {
+                            println!("client authenticated: {:#?}", c);
+                            clients.lock().unwrap().push(c);
 
-                        stream
-                            .write(format!("SUCC {}\n", user_id).as_bytes())
-                            .unwrap();
-                    } else {
-                        println!("closing connection. client has different version");
+                            let user_id: usize = match id.lock() {
+                                Ok(mut id) => {
+                                    let t = id.len();
+                                    let y = id[t - 1];
+                                    id.truncate(t - 1);
+                                    y
+                                }
+                                Err(_) => 999,
+                                // default user id is 999
+                            };
+
+                            stream
+                                .write(format!("SUCC {}\n", user_id).as_bytes())
+                                .unwrap();
+                        } else {
+                            println!("closing connection. client has different version");
+                            break 'connection;
+                        } // only accept client if they're using the same version as us
+                    } // client authentication
+                    Some(_) => {
+                        println!("closing connection. invalid command");
                         break 'connection;
-                    } // only accept client if they're using the same version as us
-                } // client authentication
-                Some(_) => {
-                    println!("closing connection. invalid command");
-                    break 'connection;
+                    }
+                    // invalid command
+                    None => {
+                        println!("closing connection. no more data2");
+                        break 'connection;
+                    } // no more data
                 }
-                // invalid command
-                None => {
-                    println!("closing connection. no more data2");
-                    break 'connection;
-                } // no more data
-            }
+            } // don't allow clients to authenticate more than once
 
             if client_connected(stream.peer_addr().unwrap(), &clients) {
                 match command {
