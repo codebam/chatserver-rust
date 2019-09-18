@@ -105,14 +105,19 @@ struct ClientHandler {
 
 impl Drop for ClientHandler {
     fn drop(&mut self) {
-        let index = self
+        match self
             .client_list
             .lock()
             .unwrap()
             .iter()
             .position(|client_list| client_list.ip == self.socket_addr)
-            .unwrap();
-        self.client_list.lock().unwrap().remove(index);
+        {
+            Some(i) => {
+                self.client_list.lock().unwrap().remove(i);
+                ()
+            }
+            None => {} // if the client doesn't exist, do nothing
+        }
         println!("client dropped.");
     }
 } // automatically drop connections when clients go out of scope
