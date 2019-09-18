@@ -7,22 +7,16 @@ use std::vec::Vec;
 
 const VERSION: &str = "FC1";
 
-fn client_connected(ip: SocketAddr, clients: &Arc<Mutex<Vec<Client>>>) -> bool {
-    for c in clients.lock().unwrap().iter() {
-        if c.ip == ip {
-            println!("client found");
-            return true;
-        }
-    }
-    false
-}
-
 fn handle_client(
     mut stream: TcpStream,
     clients: Arc<Mutex<Vec<Client>>>,
     id: Arc<Mutex<Vec<usize>>>, // stack to keep track of user ids
 ) {
     let mut data = [0 as u8; 256]; // using 256 byte buffer
+    let client = ClientHandler {
+        client_list: clients.clone(),
+        socket_addr: stream.peer_addr().unwrap(),
+    };
     'connection: while match stream.read(&mut data) {
         // close connection when the client disconnects
         Ok(0) => {
@@ -32,11 +26,11 @@ fn handle_client(
         Ok(_) => {
             let mut words = str::from_utf8(&data).unwrap().split_whitespace();
             let command = words.next();
-            if !client_connected(stream.peer_addr().unwrap(), &clients) {
+            if !clients.lock().unwrap().connected(client.socket_addr) {
                 match command {
                     Some("LOGN") => {
                         let c = Client {
-                            ip: stream.peer_addr().unwrap(),
+                            ip: client.socket_addr,
                             username: words.next().unwrap().to_string(),
                         };
                         if VERSION == words.next().unwrap().to_string() {
@@ -44,12 +38,7 @@ fn handle_client(
                             clients.lock().unwrap().push(c);
 
                             let user_id: usize = match id.lock() {
-                                Ok(mut id) => {
-                                    let t = id.len();
-                                    let y = id[t - 1];
-                                    id.truncate(t - 1);
-                                    y
-                                }
+                                Ok(mut id) => id.pop().unwrap(),
                                 Err(_) => 999,
                                 // default user id is 999
                             };
@@ -74,7 +63,7 @@ fn handle_client(
                 }
             } // don't allow clients to authenticate more than once
 
-            if client_connected(stream.peer_addr().unwrap(), &clients) {
+            if clients.lock().unwrap().connected(client.socket_addr) {
                 match command {
                     Some("") => {} // auth new client
                     Some(_) => {}
@@ -93,7 +82,7 @@ fn handle_client(
         Err(_) => {
             println!(
                 "An error occurred, terminating connection with {}",
-                stream.peer_addr().unwrap()
+                client.socket_addr
             );
             stream.shutdown(Shutdown::Both).unwrap();
             false
@@ -107,6 +96,46 @@ struct Client {
     username: String,
 }
 
+struct ClientHandler {
+    client_list: Arc<Mutex<Vec<Client>>>,
+    socket_addr: SocketAddr,
+}
+
+impl Drop for ClientHandler {
+    fn drop(&mut self) {
+        let index = self
+            .client_list
+            .lock()
+            .unwrap()
+            .iter()
+            .position(|client_list| client_list.ip == self.socket_addr)
+            .unwrap();
+        self.client_list.lock().unwrap().remove(index);
+        println!("client dropped.");
+    }
+} // automatically drop connections when clients go out of scope
+
+impl PartialEq for Client {
+    fn eq(&self, other: &Self) -> bool {
+        self.ip == other.ip
+    }
+}
+
+trait ClientMethods {
+    fn connected(&self, ip: SocketAddr) -> bool;
+}
+
+impl ClientMethods for Vec<Client> {
+    fn connected(&self, ip: SocketAddr) -> bool {
+        for c in self.iter() {
+            if c.ip == ip {
+                return true;
+            } // client found
+        }
+        false
+    }
+}
+
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:3333").unwrap();
     let clients = Arc::new(Mutex::new(vec![Client {
@@ -114,7 +143,7 @@ fn main() {
         username: "root".to_string(),
     }]));
     let max_id = 100;
-    let user_id = Arc::new(Mutex::new((0..max_id).rev().collect()));
+    let user_id = Arc::new(Mutex::new((1..max_id).rev().collect()));
     // accept connections and process them, spawning a new thread for each one
     println!("Server listening on port 3333");
     for stream in listener.incoming() {
