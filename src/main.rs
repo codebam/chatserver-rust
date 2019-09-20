@@ -38,6 +38,15 @@ fn send_message(client: &ClientHandler, userid: String, message: String, clients
     let from = clients_lock.get_client_by_ip(client.socket_addr).unwrap();
     let to = clients_lock.get_client_by_userid(userid).unwrap();
     let send = format!("RECV {}:{}", from.id, message);
+    if to.id == 0 {
+        for c in clients_lock.iter() {
+            match c.stream.try_clone().unwrap().write(send.as_bytes()) {
+                Ok(_) => {} // do nothing
+                Err(_) => { println!("error, message failed to send to {:#?}", c) }
+            }
+        }
+        return Ok(0);
+    }
     to.stream.try_clone().unwrap().write(send.as_bytes())
 }
 
