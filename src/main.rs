@@ -1,5 +1,5 @@
-use std::io::{Read, Write, Error, ErrorKind};
-use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::io::{Read, Write};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::str;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -33,7 +33,7 @@ fn send_parser(options: String) -> (String, String) {
     return (userid, message)
 }
 
-fn send_message(client: &ClientHandler, userid: String, message: String, clients: Arc<Mutex<Vec<Client>>>) -> Result<usize, Error> {
+fn send_message(client: &ClientHandler, userid: String, message: String, clients: Arc<Mutex<Vec<Client>>>) -> Result<(), ()> {
     let clients_lock = clients.lock().unwrap();
     let from = clients_lock.get_client_by_ip(client.socket_addr).unwrap();
     let to = match clients_lock.get_client_by_userid(userid.clone()) {
@@ -56,12 +56,21 @@ fn send_message(client: &ClientHandler, userid: String, message: String, clients
                         Err(_) => { println!("error, message failed to send to {:#?}", c) }
                     }
                 }
-                return Ok(0);
             }
-            to.stream.try_clone().unwrap().write(send.as_bytes())
+            let _ = to.stream.try_clone().unwrap().write(send.as_bytes());
+            Ok(())
         },
-        None => Err(Error::new(ErrorKind::Other, "user not found."))
+        None => Err(())
     }
+}
+
+fn send_conn(mut stream: TcpStream, clients: Arc<Mutex<Vec<Client>>>) -> Result<(), ()> {
+    let client_lock = clients.lock().unwrap();
+    for c in client_lock.iter() {
+        let send = format!("CONN {}:{}\n", c.id, c.username);
+        let _ = stream.write(send.as_bytes());
+    }
+    Err(())
 }
 
 fn handle_client(
@@ -96,6 +105,9 @@ fn handle_client(
                     "SEND" => {
                         let (userid, message) = send_parser(options_string);
                         let _ = send_message(&client, userid, message, clients.clone());
+                    }
+                    "WHOO" => {
+                        let _ = send_conn(stream.try_clone().unwrap(), clients.clone());
                     }
                     _ => { break 'connection }
                 }
