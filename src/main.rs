@@ -47,7 +47,7 @@ fn send_message(client: &ClientHandler, userid: String, message: String, clients
     };
     match to {
         Some(to) => {
-            println!("{:#?}", message);
+            // println!("{:#?}", message);
             let send = format!("RECV {}:{}", from.id, message);
             if to.id == 0 {
                 for c in clients_lock.iter() {
@@ -121,7 +121,6 @@ fn handle_client(
                             id: 999,
                             version: words.next().unwrap().to_string(),
                         };
-                        print!("RECIEVED VERSION:{}", &c.version);
                         if VERSION == c.version {
                             let user_id = match id.lock() {
                                 Ok(mut id) => id.pop().unwrap(),
