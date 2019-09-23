@@ -1,4 +1,4 @@
-use std::io::{Read, Write, Error};
+use std::io::{Read, Write, Error, ErrorKind};
 use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::str;
 use std::sync::{Arc, Mutex};
@@ -36,18 +36,32 @@ fn send_parser(options: String) -> (String, String) {
 fn send_message(client: &ClientHandler, userid: String, message: String, clients: Arc<Mutex<Vec<Client>>>) -> Result<usize, Error> {
     let clients_lock = clients.lock().unwrap();
     let from = clients_lock.get_client_by_ip(client.socket_addr).unwrap();
-    let to = clients_lock.get_client_by_userid(userid).unwrap();
-    let send = format!("RECV {}:{}", from.id, message);
-    if to.id == 0 {
-        for c in clients_lock.iter() {
-            match c.stream.try_clone().unwrap().write(send.as_bytes()) {
-                Ok(_) => {} // do nothing
-                Err(_) => { println!("error, message failed to send to {:#?}", c) }
+    let to = match clients_lock.get_client_by_userid(userid.clone()) {
+        Some(to) => Some(to),
+        None => {
+            match clients_lock.get_client_by_username(userid.clone()) {
+                Some(to) => Some(to),
+                None => None
             }
-        }
-        return Ok(0);
+        },
+    };
+    match to {
+        Some(to) => {
+            println!("{:#?}", message);
+            let send = format!("RECV {}:{}", from.id, message);
+            if to.id == 0 {
+                for c in clients_lock.iter() {
+                    match c.stream.try_clone().unwrap().write(send.as_bytes()) {
+                        Ok(_) => {} // do nothing
+                        Err(_) => { println!("error, message failed to send to {:#?}", c) }
+                    }
+                }
+                return Ok(0);
+            }
+            to.stream.try_clone().unwrap().write(send.as_bytes())
+        },
+        None => Err(Error::new(ErrorKind::Other, "user not found."))
     }
-    to.stream.try_clone().unwrap().write(send.as_bytes())
 }
 
 fn handle_client(
@@ -68,13 +82,24 @@ fn handle_client(
         }
         Ok(_) => {
             let (command, options_string) = data_parser(str::from_utf8(&data).unwrap().to_string());
+            // println!("{:#?}", str::from_utf8(&data).unwrap().to_string());
             let command = &*command; 
             // let options = &*options_string;
             // deref our strings
 
             let mut words = options_string.split_whitespace();
 
-            if !clients.lock().unwrap().connected(client.socket_addr) {
+            let connected = clients.lock().unwrap().connected(client.socket_addr);
+            if connected {
+                match command {
+                    "GDBY" => break 'connection, // graceful disconnect
+                    "SEND" => {
+                        let (userid, message) = send_parser(options_string);
+                        let _ = send_message(&client, userid, message, clients.clone());
+                    }
+                    _ => { break 'connection }
+                }
+            } else {
                 match command {
                     "LOGN" => {
                         let mut c = Client {
@@ -84,6 +109,7 @@ fn handle_client(
                             id: 999,
                             version: words.next().unwrap().to_string(),
                         };
+                        print!("RECIEVED VERSION:{}", &c.version);
                         if VERSION == c.version {
                             let user_id = match id.lock() {
                                 Ok(mut id) => id.pop().unwrap(),
@@ -112,23 +138,10 @@ fn handle_client(
                 }
             } // don't allow clients to authenticate more than once
 
-            if clients.lock().unwrap().connected(client.socket_addr) {
-                match command {
-                    "GDBY" => break 'connection, // graceful disconnect
-                    "SEND" => {
-                        let (userid, message) = send_parser(options_string);
-                        let _ = send_message(&client, userid, message, clients.clone());
-                    }
-                    _ => {}
-                }
-            } else {
-                println!("closing connection. client didn't login");
-                break 'connection;
-            } // only let logged in clients issue commands
-
-            println!("{}", str::from_utf8(&data).unwrap());
-            println!("clients: {:#?}", clients);
+            // println!("{}", str::from_utf8(&data).unwrap());
+            // println!("clients: {:#?}", clients);
             // debug
+            data = [0 as u8; 256]; // clear the buffer on each iteration
             true
         }
         Err(_) => {
@@ -136,10 +149,10 @@ fn handle_client(
                 "An error occurred, terminating connection with {}",
                 client.socket_addr
             );
-            stream.shutdown(Shutdown::Both).unwrap();
-            false
+            break 'connection;
         }
-    } {}
+    }
+    {}
 }
 
 #[derive(Debug)]
@@ -158,20 +171,19 @@ struct ClientHandler {
 
 impl Drop for ClientHandler {
     fn drop(&mut self) {
-        match self
-            .client_list
-            .lock()
-            .unwrap()
-            .iter()
-            .position(|client_list| client_list.ip == self.socket_addr)
-        {
-            Some(i) => {
-                self.client_list.lock().unwrap().remove(i);
-                ()
-            }
-            None => {} // if the client doesn't exist, do nothing
+        match self.client_list.lock() {
+            Ok(mut client_list_lock) => {
+                match client_list_lock.iter()
+                    .position(|client_list| client_list.ip == self.socket_addr) {
+                        Some(i) => {
+                            client_list_lock.remove(i);
+                            ()
+                        },
+                        None => ()
+                    }
+            },
+            Err(_) => ()
         }
-        println!("client dropped.");
     }
 } // automatically drop connections when clients go out of scope
 
