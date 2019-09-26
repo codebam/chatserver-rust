@@ -17,7 +17,7 @@ fn data_parser(data: String) -> (String, String) {
         }
     }
     let options = chars.as_str().to_string();
-    return (command, options)
+    return (command, options);
 }
 
 fn send_parser(options: String) -> (String, String) {
@@ -30,19 +30,22 @@ fn send_parser(options: String) -> (String, String) {
         }
     }
     let message = chars.as_str().to_string();
-    return (userid, message)
+    return (userid, message);
 }
 
-fn send_message(client: &ClientHandler, userid: String, message: String, clients: Arc<Mutex<Vec<Client>>>) -> Result<(), ()> {
+fn send_message(
+    client: &ClientHandler,
+    userid: String,
+    message: String,
+    clients: Arc<Mutex<Vec<Client>>>,
+) -> Result<(), ()> {
     let clients_lock = clients.lock().unwrap();
     let from = clients_lock.get_client_by_ip(client.socket_addr).unwrap();
     let to = match clients_lock.get_client_by_userid(userid.clone()) {
         Some(to) => Some(to),
-        None => {
-            match clients_lock.get_client_by_username(userid.clone()) {
-                Some(to) => Some(to),
-                None => None
-            }
+        None => match clients_lock.get_client_by_username(userid.clone()) {
+            Some(to) => Some(to),
+            None => None,
         },
     };
     match to {
@@ -53,18 +56,21 @@ fn send_message(client: &ClientHandler, userid: String, message: String, clients
                 for c in clients_lock.iter() {
                     match c.stream.try_clone().unwrap().write(send.as_bytes()) {
                         Ok(_) => {} // do nothing
-                        Err(_) => { println!("error, message failed to send to {:#?}", c) }
+                        Err(_) => println!("error, message failed to send to {:#?}", c),
                     }
                 }
             }
-            let _ = to.stream.try_clone().unwrap().write(send.as_bytes());
+            match to.stream.try_clone().unwrap().write(send.as_bytes()) {
+                Ok(_) => {}
+                Err(_) => {}
+            }
             Ok(())
-        },
-        None => Err(())
+        }
+        None => Err(()),
     }
 }
 
-fn send_conn(mut stream: TcpStream, clients: Arc<Mutex<Vec<Client>>>) -> Result<(), ()> {
+fn whoo(mut stream: TcpStream, clients: Arc<Mutex<Vec<Client>>>) -> Result<(), ()> {
     let client_lock = clients.lock().unwrap();
     for c in client_lock.iter() {
         let send = format!("CONN {}:{}\n", c.id, c.username);
@@ -91,9 +97,7 @@ fn handle_client(
         }
         Ok(_) => {
             let (command, options_string) = data_parser(str::from_utf8(&data).unwrap().to_string());
-            // println!("{:#?}", str::from_utf8(&data).unwrap().to_string());
-            let command = &*command; 
-            // let options = &*options_string;
+            let command = &*command;
             // deref our strings
 
             let mut words = options_string.split_whitespace();
@@ -107,9 +111,9 @@ fn handle_client(
                         let _ = send_message(&client, userid, message, clients.clone());
                     }
                     "WHOO" => {
-                        let _ = send_conn(stream.try_clone().unwrap(), clients.clone());
+                        let _ = whoo(stream.try_clone().unwrap(), clients.clone());
                     }
-                    _ => { break 'connection }
+                    _ => break 'connection,
                 }
             } else {
                 match command {
@@ -132,11 +136,12 @@ fn handle_client(
                             // set the correct user id if we're letting the client connect
 
                             println!("client authenticated: {:#?}", c);
-                            clients.lock().unwrap().push(c);
+                            clients.lock().unwrap().add_client(c);
 
-                            stream
-                                .write(format!("SUCC {}\n", user_id).as_bytes())
-                                .unwrap();
+                            match stream.write(format!("SUCC {}\n", user_id).as_bytes()) {
+                                Ok(_) => {}
+                                Err(_) => {}
+                            }
                         } else {
                             println!("closing connection. client has different version");
                             break 'connection;
@@ -162,8 +167,7 @@ fn handle_client(
             );
             break 'connection;
         }
-    }
-    {}
+    } {}
 }
 
 #[derive(Debug)]
@@ -184,16 +188,9 @@ impl Drop for ClientHandler {
     fn drop(&mut self) {
         match self.client_list.lock() {
             Ok(mut client_list_lock) => {
-                match client_list_lock.iter()
-                    .position(|client_list| client_list.ip == self.socket_addr) {
-                        Some(i) => {
-                            client_list_lock.remove(i);
-                            ()
-                        },
-                        None => ()
-                    }
-            },
-            Err(_) => ()
+                client_list_lock.remove_client(self.socket_addr);
+            }
+            Err(_) => (),
         }
     }
 } // automatically drop connections when clients go out of scope
@@ -209,6 +206,11 @@ trait ClientMethods {
     fn get_client_by_username(&self, username: String) -> Option<&Client>;
     fn get_client_by_userid(&self, username: String) -> Option<&Client>;
     fn get_client_by_ip(&self, ip: SocketAddr) -> Option<&Client>;
+    fn add_client(&mut self, client: Client);
+    fn send_conn(&self, client: &Client);
+    fn remove_client(&mut self, socket: SocketAddr);
+    fn send_disc(&self, client: &Client);
+    fn get_client_index(&self, client: &Client) -> Option<usize>;
 }
 
 impl ClientMethods for Vec<Client> {
@@ -224,7 +226,7 @@ impl ClientMethods for Vec<Client> {
     fn connected(&self, ip: SocketAddr) -> bool {
         match self.get_client_by_ip(ip) {
             Some(_) => true,
-            None => false
+            None => false,
         }
     }
     fn get_client_by_username(&self, username: String) -> Option<&Client> {
@@ -242,6 +244,53 @@ impl ClientMethods for Vec<Client> {
             }
         }
         None
+    }
+
+    fn add_client(&mut self, client: Client) {
+        &self.send_conn(&client);
+        &self.push(client);
+    }
+
+    fn send_conn(&self, client: &Client) {
+        let send = format!("CONN {}:{}\n", client.id, client.username);
+        for c in self.iter() {
+            if c.id != client.id {
+                match c.stream.try_clone().unwrap().write(send.as_bytes()) {
+                    Ok(_) => {}
+                    Err(_) => {}
+                }
+            }
+        } // only send to clients other than the connecting client
+    }
+
+    fn get_client_index(&self, client: &Client) -> Option<usize> {
+        self.iter()
+            .position(|client_list| client_list.id == client.id)
+    }
+
+    fn remove_client(&mut self, socket: SocketAddr) {
+        match self.get_client_by_ip(socket) {
+            Some(client) => {
+                match self.get_client_index(&client) {
+                    Some(i) => {
+                        &self.send_disc(&client);
+                        &self.remove(i);
+                    }
+                    None => {}
+                } // remove the client and tell other clients they disconnected
+            }
+            None => {}
+        }
+    }
+
+    fn send_disc(&self, client: &Client) {
+        let send = format!("DISC {}\n", client.id);
+        for c in self.iter() {
+            match c.stream.try_clone().unwrap().write(send.as_bytes()) {
+                Ok(_) => {}
+                Err(_) => {}
+            }
+        }
     }
 }
 
