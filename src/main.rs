@@ -295,9 +295,9 @@ impl ClientMethods for Vec<Client> {
 }
 
 fn main() {
-    let listener = TcpListener::bind("127.0.0.1:3333").unwrap();
+    let listener = TcpListener::bind("127.0.0.1:59444").unwrap();
     let clients = Arc::new(Mutex::new(vec![Client {
-        stream: TcpStream::connect("127.0.0.1:3333").unwrap(),
+        stream: TcpStream::connect("127.0.0.1:59444").unwrap(),
         ip: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0),
         id: 0,
         username: "root".to_string(),
@@ -306,7 +306,7 @@ fn main() {
     let max_id = 100;
     let user_id = Arc::new(Mutex::new((1..max_id).rev().collect()));
     // accept connections and process them, spawning a new thread for each one
-    println!("Server listening on port 3333");
+    println!("Server listening on port 59444");
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
