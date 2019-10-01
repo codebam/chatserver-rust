@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::vec::Vec;
@@ -9,7 +10,7 @@ use std::vec::Vec;
 struct ServerData {
     version: usize,
     clients: Mutex<Vec<Option<Client>>>,
-    next_id: Mutex<usize>,
+    next_id: AtomicUsize,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -32,7 +33,7 @@ struct Client {
 
 fn handle_client(mut stream: TcpStream, server: Arc<ServerData>) -> Result<(), std::io::Error> {
     let mut data = Vec::new();
-    let mut reader = BufReader::new(stream);
+    let mut reader = BufReader::new(stream.try_clone()?);
 
     loop {
         data.clear();
@@ -45,6 +46,7 @@ fn handle_client(mut stream: TcpStream, server: Arc<ServerData>) -> Result<(), s
         } // close the stream if there are no bytes left to read
 
         let packet: Packet = serde_json::from_slice(&data)?;
+        dbg!(&packet);
         if packet.version != server.version {
             return Ok(());
         } // close the stream if the packet version is different
@@ -52,16 +54,17 @@ fn handle_client(mut stream: TcpStream, server: Arc<ServerData>) -> Result<(), s
         match packet.verb.as_ref() {
             "LOGN" => {
                 let new_client = Client {
-                    stream: Some(stream),
-                    username: packet.source,
-                    id: server.next_id.lock()?,
+                    stream: Some(stream.try_clone()?),
+                    username: packet.source.clone(),
+                    id: server.next_id.fetch_add(1, Ordering::Relaxed),
                     version: packet.version,
                 };
+                dbg!(&new_client);
+                server.clients.lock().unwrap().push(Some(new_client));
             }
             "GDBY" => {}
-            _ => Err(()),
+            _ => (),
         }
-        println!("{:#?}", packet);
     }
 }
 
@@ -70,7 +73,7 @@ fn main() -> Result<(), std::io::Error> {
     let server = Arc::new(ServerData {
         version: 1,
         clients: Mutex::new(vec![None]),
-        next_id: Mutex::new(1),
+        next_id: AtomicUsize::new(1),
     });
     println!("Server listening on port 59444");
     for stream in listener.incoming() {
