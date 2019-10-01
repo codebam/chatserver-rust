@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
+use std::io::{Error, ErrorKind};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -61,9 +62,10 @@ fn handle_client(mut stream: TcpStream, server: Arc<ServerData>) -> Result<(), s
                 };
                 dbg!(&new_client);
                 server.clients.lock().unwrap().push(Some(new_client));
+                return Ok(());
             }
-            "GDBY" => {}
-            _ => (),
+            "GDBY" => return Ok(()),
+            _ => return Err(Error::new(ErrorKind::Other, "Invalid verb")),
         }
     }
 }
