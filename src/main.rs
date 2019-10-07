@@ -63,8 +63,25 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
     };
     // read next packet and deserialize it
 
-    let verb = packet.verb.unwrap();
-    let from = packet.from.unwrap();
+    let version: usize = match packet.version {
+        Some(version) => {
+            if version == SERVER_VERSION {
+                SERVER_VERSION
+            } else {
+                Err("invalid version number")?
+            }
+        }
+        None => Err("peer didn't specify version")?,
+    };
+    drop(version);
+    let verb: String = match packet.verb {
+        Some(verb) => verb,
+        None => Err("peer didn't specify verb")?,
+    };
+    let from: String = match packet.from {
+        Some(from) => from,
+        None => Err("peer didn't specify sender")?,
+    };
     let name: String = match verb.clone().as_ref() {
         "LOGN" => from.trim(),
         _ => Err("peer did not login")?,
