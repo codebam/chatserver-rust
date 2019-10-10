@@ -102,6 +102,19 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
         .unwrap();
     // send new peer to our broker to keep track of peer list
 
+    broker
+        .send(Event::NewPacket {
+            number: None, // TODO
+            version: Some(SERVER_VERSION),
+            from: Some(String::from("root")),
+            to: Some(vec![name.clone().to_string()]),
+            verb: Some(String::from("SUCC")),
+            data: None,
+        })
+        .await
+        .unwrap();
+    // send peer success packet after login
+
     while let Some(line) = lines.next().await {
         let line = line?;
         let packet: Packet = serde_json::from_str(&line)?;
@@ -244,8 +257,8 @@ async fn broker_loop(mut events: Receiver<Event>) {
                         };
                         // create our packet
 
-                        let msg = serde_json::to_string(&packet).unwrap();
-                        // serialize it
+                        let msg = format!("{}\n", serde_json::to_string(&packet).unwrap());
+                        // serialize it and append a newline
 
                         peer.send(msg).await.unwrap();
                         // then send it off
