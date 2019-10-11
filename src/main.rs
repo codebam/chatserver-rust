@@ -120,19 +120,23 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
         let packet: Packet = serde_json::from_str(&line)?;
         // read the next packet
 
-        let response_packet: Option<Packet> = match packet
-            .verb
-            .unwrap_or(Err("peer did not specify verb")?)
+        print!("{:#?}", packet);
+        let verb = match packet.verb {
+            Some(verb) => verb,
+            None => Err("peer did not specify verb")?
+        };
+        let response_packet: Option<Packet> = match verb
             .as_ref()
         {
             "SEND" => {
-                let dest: Vec<String> = packet.to.unwrap_or(Err("peer didn't give us a dest")?);
-                let msg: String = packet
-                    .data
-                    .unwrap_or(Err("peer didn't send any data")?)
-                    .trim()
-                    .to_string();
-
+                let dest: Vec<String> = match packet.to {
+                    Some(to) => to,
+                    None => Err("peer didn't give us a dest")?,
+                };
+                let msg: String = match packet.data {
+                    Some(data) => data.trim().to_string(),
+                    None => Err("peer didn't send any data")?
+                };
                 let packet: Packet = Packet {
                     number: None, // TODO: unimplemented
                     version: Some(SERVER_VERSION),
@@ -143,6 +147,9 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
                 };
                 Some(packet)
             }
+            "DISC" => {
+                return Ok(());
+            },
             _ => Err("peer did not specify a valid verb")?,
         };
         // handle the packet
