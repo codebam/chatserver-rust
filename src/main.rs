@@ -32,13 +32,12 @@ async fn accept_loop(addr: impl ToSocketAddrs) -> Result<()> {
     // wait until we recieve a connection
 
     let (broker_sender, broker_receiver) = mpsc::unbounded();
-    let broker = task::spawn(broker_loop(broker_receiver));
+    let broker = task::spawn(broker_loop(broker_sender.clone(), broker_receiver));
     // create our broker for recieving and sending data
 
     let mut incoming = listener.incoming();
     while let Some(stream) = incoming.next().await {
         let stream = stream?;
-        println!("Accepting from: {}", stream.peer_addr()?);
         spawn_and_log_error(connection_loop(broker_sender.clone(), stream));
     }
     // once our peer sends data, send it through our connection loop
@@ -120,7 +119,6 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
         let packet: Packet = serde_json::from_str(&line)?;
         // read the next packet
 
-        print!("{:#?}", packet);
         let verb = match packet.verb {
             Some(verb) => verb,
             None => Err("peer did not specify verb")?
@@ -147,6 +145,29 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
                 };
                 Some(packet)
             }
+            "SALL" => {
+                let msg: String = match packet.data {
+                    Some(data) => data.trim().to_string(),
+                    None => Err("peer didn't send any data")?
+                };
+                broker.send(Event::NewPacketAll {
+                    number: None,
+                    version: Some(SERVER_VERSION),
+                    from: Some(name.clone()),
+                    verb: Some(String::from("RECV")),
+                    data: Some(msg),
+                }).await.unwrap();
+                None
+            },
+            "WHOO" => {
+                broker.send(Event::NewPacketWho {
+                    number: None,
+                    version: Some(SERVER_VERSION),
+                    from: Some(name.clone()),
+                    verb: Some(String::from("CONN")),
+                }).await.unwrap();
+                None
+            },
             "DISC" => {
                 return Ok(());
             },
@@ -154,23 +175,20 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
         };
         // handle the packet
 
-        let uw_packet = match response_packet {
-            Some(packet) => packet,
-            None => Err("no packet to send")?,
-        };
-        broker
-            .send(Event::NewPacket {
-                number: uw_packet.number,
-                version: uw_packet.version,
-                from: uw_packet.from,
-                to: uw_packet.to,
-                verb: uw_packet.verb,
-                data: uw_packet.data,
-            })
-            .await
-            .unwrap();
+        match response_packet {
+            Some(packet) => {
+                broker.send(Event::NewPacket {
+                    number: packet.number,
+                    version: packet.version,
+                    from: packet.from,
+                    to: packet.to,
+                    verb: packet.verb,
+                    data: packet.data,
+                }).await.unwrap();
+            },
+            None => (),
+        }; // send a packet if we created one
     }
-
     Ok(())
 }
 
@@ -196,6 +214,12 @@ async fn connection_writer_loop(
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+struct ConnList {
+    conn: Vec<String>
+}
+
+
+#[derive(Serialize, Deserialize, Debug)]
 struct Packet {
     number: Option<usize>,
     version: Option<usize>,
@@ -206,6 +230,19 @@ struct Packet {
 }
 
 enum Event {
+    NewPacketWho {
+        number: Option<usize>,
+        version: Option<usize>,
+        from: Option<String>,
+        verb: Option<String>,
+    },
+    NewPacketAll {
+        number: Option<usize>,
+        version: Option<usize>,
+        from: Option<String>,
+        verb: Option<String>,
+        data: Option<String>,
+    },
     NewPacket {
         number: Option<usize>,
         version: Option<usize>,
@@ -223,7 +260,7 @@ enum Event {
     },
 }
 
-async fn broker_loop(mut events: Receiver<Event>) {
+async fn broker_loop(mut broker: Sender<Event>, mut events: Receiver<Event>) {
     let (disconnect_sender, mut disconnect_receiver) =
         mpsc::unbounded::<(String, Receiver<String>)>();
     let mut peers: HashMap<String, Sender<String>> = HashMap::new();
@@ -243,6 +280,44 @@ async fn broker_loop(mut events: Receiver<Event>) {
             // remove disconnected peers
         };
         match event {
+            Event::NewPacketWho {
+                number,
+                version,
+                from,
+                verb,
+            } => {
+                let connected_peers = ConnList { conn: peers.keys().cloned().collect::<Vec<_>>() };
+                let data = serde_json::to_string(&connected_peers).unwrap();
+                broker.send(Event::NewPacket {
+                    number: number,
+                    version: version,
+                    from: None,
+                    to: Some(vec![from.unwrap()]),
+                    verb: verb,
+                    data: Some(data),
+                }).await.unwrap();
+                // send it back to the broker
+            }
+            Event::NewPacketAll {
+                number,
+                version,
+                from,
+                verb,
+                data,
+            } => {
+                let to: Vec<String> = peers.keys().cloned().collect::<Vec<_>>();
+                // get a list of all peers
+
+                broker.send(Event::NewPacket {
+                    number: number,
+                    version: version,
+                    from: from,
+                    to: Some(to),
+                    verb: verb,
+                    data: data,
+                }).await.unwrap();
+                // send it back to the broker (look one line down)
+            }
             Event::NewPacket {
                 number,
                 version,
