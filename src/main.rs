@@ -24,7 +24,7 @@ const SERVER_VERSION: usize = 1;
 // FooChat Version 1
 
 pub(crate) fn main() -> Result<()> {
-    task::block_on(accept_loop("127.0.0.1:682651"))
+    task::block_on(accept_loop("127.0.0.1:59944"))
 }
 
 async fn accept_loop(addr: impl ToSocketAddrs) -> Result<()> {
@@ -169,6 +169,9 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
                 None
             },
             "DISC" => {
+                broker.send(Event::ClientDisconnect {
+                    username: Some(name.clone()),
+                }).await.unwrap();
                 return Ok(());
             },
             _ => Err("peer did not specify a valid verb")?,
@@ -188,6 +191,17 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
             },
             None => (),
         }; // send a packet if we created one
+    }
+    match broker.send(Event::NewPacket {
+        number: None, 
+        version: Some(SERVER_VERSION),
+        from: None,
+        to: None,
+        data: Some(name.clone()),
+        verb: Some(String::from("DISC")),
+    }).await {
+        Ok(_) => (),
+        Err(_) => (),
     }
     Ok(())
 }
@@ -230,6 +244,9 @@ struct Packet {
 }
 
 enum Event {
+    ClientDisconnect {
+        username: Option<String>,
+    },
     NewPacketWho {
         number: Option<usize>,
         version: Option<usize>,
@@ -280,6 +297,19 @@ async fn broker_loop(mut broker: Sender<Event>, mut events: Receiver<Event>) {
             // remove disconnected peers
         };
         match event {
+            Event::ClientDisconnect {
+                username,
+            } => {
+                let to = peers.keys().cloned().collect::<Vec<_>>();
+                broker.send(Event::NewPacket {
+                    number: None, 
+                    version: Some(SERVER_VERSION),
+                    from: None,
+                    to: Some(to),
+                    data: username,
+                    verb: Some(String::from("DISC")),
+                }).await.unwrap();
+            }
             Event::NewPacketWho {
                 number,
                 version,
@@ -327,27 +357,33 @@ async fn broker_loop(mut broker: Sender<Event>, mut events: Receiver<Event>) {
                 data,
             } => {
                 let _to = to.clone();
-                for addr in to.unwrap() {
-                    if let Some(peer) = peers.get_mut(&addr) {
-                        let packet = Packet {
-                            number: number,
-                            version: version,
-                            from: from.clone(),
-                            to: _to.clone(),
-                            verb: verb.clone(),
-                            data: data.clone(),
-                        };
-                        // create our packet
+                match to {
+                    Some(addrs) => {
+                        for addr in addrs {
+                            if let Some(peer) = peers.get_mut(&addr) {
+                                let packet = Packet {
+                                    number: number,
+                                    version: version,
+                                    from: from.clone(),
+                                    to: _to.clone(),
+                                    verb: verb.clone(),
+                                    data: data.clone(),
+                                };
+                                // create our packet
 
-                        let msg = format!("{}\n", serde_json::to_string(&packet).unwrap());
-                        // serialize it and append a newline
+                                let msg = format!("{}\n", serde_json::to_string(&packet).unwrap());
+                                // serialize it and append a newline
 
-                        peer.send(msg).await.unwrap();
-                        // then send it off
-                    }
-                    // only run this block if the peer is still connected
+                                match peer.send(msg).await {
+                                    Ok(_) => (),
+                                    Err(_) => (),
+                                }
+                                // then send it off
+                            }
+                        }
+                    },
+                    None => ()
                 }
-                // send to each peer in the vector
             }
             Event::NewPeer {
                 name,
