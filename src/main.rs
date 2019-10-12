@@ -24,7 +24,7 @@ const SERVER_VERSION: usize = 1;
 // FooChat Version 1
 
 pub(crate) fn main() -> Result<()> {
-    task::block_on(accept_loop("127.0.0.1:8080"))
+    task::block_on(accept_loop("127.0.0.1:682651"))
 }
 
 async fn accept_loop(addr: impl ToSocketAddrs) -> Result<()> {
@@ -370,6 +370,7 @@ async fn broker_loop(mut broker: Sender<Event>, mut events: Receiver<Event>) {
                     });
                 }
             },
+            // add new peers to our hashmap of connected peers
         }
     }
     drop(peers);
