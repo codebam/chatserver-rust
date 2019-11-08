@@ -1,6 +1,10 @@
+mod lib;
+pub use crate::lib::hashing;
+
 use std::{
     collections::hash_map::{Entry, HashMap},
     sync::Arc,
+    str,
 };
 
 use async_std::{
@@ -141,7 +145,8 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
                     from: Some(name.clone()),
                     to: Some(dest),
                     verb: Some(String::from("RECV")),
-                    data: Some(msg),
+                    data: Some(msg.clone()),
+                    checksum: Some(hashing::get_hash(msg)),
                 };
                 Some(packet)
             }
@@ -241,6 +246,7 @@ struct Packet {
     to: Option<Vec<String>>,
     verb: Option<String>,
     data: Option<String>,
+    checksum: Option<String>,
 }
 
 enum Event {
@@ -368,6 +374,7 @@ async fn broker_loop(mut broker: Sender<Event>, mut events: Receiver<Event>) {
                                     to: _to.clone(),
                                     verb: verb.clone(),
                                     data: data.clone(),
+                                    checksum: Some(hashing::get_hash(data.clone().unwrap())),
                                 };
                                 // create our packet
 
