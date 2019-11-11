@@ -6,12 +6,4 @@ pub mod hashing {
         hasher.input(input.into_bytes());
         return format!("{:x}", hasher.result());
     }
-
-    pub fn check_hash(input: String, provided_hash: String) -> bool {
-        let hash = get_hash(input);
-        if hash == provided_hash {
-            return true;
-        }
-        false
-    }
 }
